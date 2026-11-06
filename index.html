@@ -68,7 +68,8 @@ body:not(.touch) #ammoBox{display:block}
 #menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 30%,rgba(11,15,20,.55),rgba(5,7,10,.88));touch-action:pan-y;pointer-events:auto}
 #menu.pauseBg{background:rgba(5,7,10,.82)}
 .scr{display:none;width:min(980px,100%);max-height:100%;overflow:auto;padding:max(14px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(14px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));touch-action:pan-y;-webkit-overflow-scrolling:touch}
-.scr.on{display:block}
+.scr.on{display:block;transform:translateZ(0);will-change:scroll-position;overscroll-behavior:contain}
+.ch img,.wc img{transform:translateZ(0)}
 h1{font-family:var(--head);font-size:clamp(40px,9vw,84px);margin:0;letter-spacing:.04em;line-height:.95;color:#fff;text-shadow:3px 3px 0 #ff7a45,6px 6px 0 #0006}
 h1 small{display:block;font-family:var(--mono);font-size:12px;letter-spacing:.35em;color:var(--acc);text-shadow:none;margin-top:8px}
 h2.sec{font-family:var(--head);letter-spacing:.1em;font-weight:400;font-size:20px;margin:16px 0 8px;color:var(--acc);display:flex;align-items:center;gap:10px}h2.sec::after{content:"";flex:1;height:2px;background:var(--line)}
@@ -4230,7 +4231,7 @@ function makeThumbs() {
 
 // ---------------- screens ----------------
 function showScr(id) {
-  const m = $('menu'); m.style.display = 'flex';
+  const m = $('menu'); m.style.display = 'flex'; menuDirty = true;
   for (const s of document.querySelectorAll('.scr')) s.classList.toggle('on', s.id === id);
   m.classList.toggle('pauseBg', !!(game && game.running));
 }
@@ -4308,8 +4309,8 @@ function initUI() {
   syncDiff = seg('segDiff', 'diff'); syncSize = seg('segSize', 'size', Number); syncTeam = seg('segTeam', 'team');
   $('modeList').addEventListener('click', e => { const c = e.target.closest('.card'); if (!c) return; S.mode = c.dataset.id; store.set('mode', S.mode); renderModes(); renderChars(); syncModeUI(); sfx('ui', 0.6); });
   $('mapList').addEventListener('click', e => { const c = e.target.closest('.card'); if (!c) return; S.map = c.dataset.id; store.set('map', S.map); renderMaps(); sfx('ui', 0.6); });
-  $('charList').addEventListener('click', e => { const c = e.target.closest('.ch'); if (!c) return; S.char = c.dataset.id; store.set('char', S.char); renderChars(); sfx('ui', 0.6); });
-  $('weapList').addEventListener('click', e => { const c = e.target.closest('.wc[data-id],.wc[data-sid]'); if (!c) return; if (c.dataset.sid) { S.sec = c.dataset.sid; store.set('sec', S.sec); } else { S.prim = c.dataset.id; store.set('prim', S.prim); } renderWeapons(); sfx('ui', 0.6); });
+  $('charList').addEventListener('click', e => { const c = e.target.closest('.ch'); if (!c) return; S.char = c.dataset.id; store.set('char', S.char); for (const el of $('charList').querySelectorAll('.ch.on')) el.classList.remove('on'); c.classList.add('on'); sfx('ui', 0.6); });
+  $('weapList').addEventListener('click', e => { const c = e.target.closest('.wc[data-id],.wc[data-sid]'); if (!c) return; if (c.dataset.sid) { S.sec = c.dataset.sid; store.set('sec', S.sec); } else { S.prim = c.dataset.id; store.set('prim', S.prim); } for (const el of $('weapList').querySelectorAll(c.dataset.sid ? '.wc[data-sid].on' : '.wc[data-id].on')) el.classList.remove('on'); c.classList.add('on'); sfx('ui', 0.6); });
   const pre = () => initAudio();
   document.addEventListener('pointerdown', pre, { once: false, passive: true });
   $('btnOffline').onclick = () => { pre(); openSetup('offline'); };
@@ -4391,10 +4392,10 @@ async function go() {
 let last = 0, frames = 0, acc = 0, upCount = 0, menuT0 = 0, fpsAcc = 0, fpsN = 0;
 function applySize() {
   const q = qualityCfg(), cssW = innerWidth, cssH = innerHeight, dpr = Math.min(devicePixelRatio || 1, 3);
-  const mbg = (ctl.touch && !(game && game.running)) ? 0.35 : 1;
+  const mbg = (ctl.touch && !(game && game.running)) ? 0.6 : 1;
   const native = cssW * cssH * dpr * dpr, s = mbg * Math.min(1, Math.sqrt(q.mp * (ctl.touch && game && game.mapId === 'island' ? 0.6 : 1) * 1e6 / native)) * adapt;
   const w = Math.max(320, Math.round(cssW * dpr * s)), h = Math.max(180, Math.round(cssH * dpr * s));
-  if (canvas.width !== w || canvas.height !== h) { R.resize(w, h); }
+  if (canvas.width !== w || canvas.height !== h) { R.resize(w, h); menuDirty = true; }
 }
 function drawMenuBg(t) {
   const a = t * 0.00008 * 0.9, r = 46, c = 48;
@@ -4405,14 +4406,14 @@ function drawMenuBg(t) {
   R.aspect = canvas.width / canvas.height; R.begin(ex, ey, ez, yaw, -pitch * -1 * -1, 70, 160);
   const v = assets.vis; R.drawMesh(v.floor.mesh, v.floor.tex, M4.ident(new Float32Array(16)), true); R.drawMesh(v.wall.mesh, v.wall.tex, M4.ident(new Float32Array(16)), true); R.drawMesh(v.crate.mesh, v.crate.tex, M4.ident(new Float32Array(16)), true);
 }
-let menuIn = 0, menuDraw = 0;
-for (const ev of ['scroll', 'touchmove', 'pointermove', 'wheel']) addEventListener(ev, () => { menuIn = performance.now(); }, { capture: true, passive: true });
+// menu background is STATIC: rendered once (and again only after resize / screen change), never animated -> no GPU load while scrolling menus
+let menuDirty = true; const MENU_BG_T = 26000;
 function loop(now) {
   requestAnimationFrame(loop);
   let dt = (now - last) / 1000; last = now; if (dt > 0.1) dt = 0.1; if (dt <= 0) return;
   applySize();
   if (game.running) { game.frame(dt); }
-  else if (!(ctl.touch && (now - menuIn < 450 || now - menuDraw < 60))) { menuDraw = now; drawMenuBg(now - menuT0); }
+  else if (menuDirty) { menuDirty = false; drawMenuBg(MENU_BG_T); }
   // fps + adaptive resolution
   fpsAcc += dt; fpsN++; acc += dt; frames++;
   if (set.fps && fpsAcc > 0.5) { $('fps').textContent = Math.round(fpsN / fpsAcc) + ' fps · ' + canvas.width + 'x' + canvas.height; fpsAcc = 0; fpsN = 0; } else if (fpsAcc > 0.5) { fpsAcc = 0; fpsN = 0; }
@@ -4425,7 +4426,8 @@ function loop(now) {
   }
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden && game && game.running && game.role === 'offline') { if ($('menu').style.display === 'none') openPause(); } });
-addEventListener('resize', () => { hud.resize(); });
+addEventListener('resize', () => { hud.resize(); menuDirty = true; });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) menuDirty = true; });
 boot();
 window.__game = () => game; window.__S = S; window.__ctl = ctl;
 
