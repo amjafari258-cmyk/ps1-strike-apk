@@ -1,0 +1,8 @@
+{
+  "appId": "com.ps1strike.game",
+  "appName": "PS1 Strike",
+  "webDir": "www",
+  "backgroundColor": "#07090c",
+  "server": { "androidScheme": "https" },
+  "android": { "allowMixedContent": false, "webContentsDebuggingEnabled": false }
+}
