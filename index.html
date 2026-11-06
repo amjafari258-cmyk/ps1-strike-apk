@@ -39,7 +39,7 @@ body:not(.touch) #ammoBox{display:block}
 #hitm{position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;opacity:0}
 #hitm::before,#hitm::after{content:"";position:absolute;left:12px;top:-2px;width:2px;height:30px;background:#fff;transform:rotate(45deg)}#hitm::after{transform:rotate(-45deg)}
 #hitm.on{animation:hm .25s ease-out}#hitm.on.head::before,#hitm.on.head::after{background:#ff4a3d}@keyframes hm{0%{opacity:1;transform:scale(1.5)}100%{opacity:0;transform:scale(.9)}}
-#dmg{position:absolute;inset:0;box-shadow:inset 0 0 120px 30px rgba(255,0,0,.55);opacity:0;transition:opacity .3s}
+#dmg{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(255,0,0,0) 52%,rgba(255,0,0,.3) 82%,rgba(255,0,0,.6) 100%);opacity:0;transition:opacity .3s;will-change:opacity}
 #dmgDirW{position:absolute;left:50%;top:50%;width:0;height:0}#dmgDir{position:absolute;left:-60px;top:-160px;width:120px;height:100px;opacity:0;transition:opacity .4s;background:radial-gradient(ellipse at 50% 100%,rgba(255,40,30,.0),rgba(255,40,30,0) 30%,rgba(255,40,30,.55) 31%,rgba(255,40,30,0) 70%);transform-origin:60px 160px;clip-path:polygon(20% 0,80% 0,100% 100%,0 100%)}
 #hint{position:absolute;left:50%;top:62%;transform:translateX(-50%);text-align:center;background:rgba(8,12,18,.8);padding:8px 14px;font-size:14px;display:none;border:1px solid var(--acc)}#hintBarW{height:5px;background:#000;margin-top:6px;display:none}#hintBar{height:100%;background:var(--acc);width:0}
 #spec{position:absolute;bottom:20%;left:0;right:0;text-align:center;font-size:14px;color:var(--acc);text-shadow:0 1px 2px #000}#dead{position:absolute;top:36%;left:0;right:0;text-align:center;font-family:var(--head);font-size:30px;letter-spacing:.06em;color:#ff7a6a;text-shadow:0 2px 0 #000}
@@ -612,6 +612,7 @@ class Renderer {
     this.fxIb = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.fxIb); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ib, gl.STATIC_DRAW);
     gl.bindVertexArray(null);
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
+    this.sCull = 1; this.sProg = null; this.sTex = null; this.sVao = null; this.sHas = this.sCut = this.sUn = -1; this.sF0 = this.sF1 = this.sF2 = 0; this.sC0 = this.sC1 = this.sC2 = this.sC3 = -1;
     this.right = [1, 0, 0]; this.up = [0, 1, 0];
     this.tmp = new Float32Array(16);
   }
@@ -627,7 +628,7 @@ class Renderer {
     this._texParams(t, repeat, src.width, src.height, nearest); return t;
   }
   _texParams(t, repeat, w, h, nearest) {
-    const gl = this.gl; const pot = (w & (w - 1)) === 0 && (h & (h - 1)) === 0;
+    this.sTex = null; const gl = this.gl; const pot = (w & (w - 1)) === 0 && (h & (h - 1)) === 0;
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, w > 1 ? gl.LINEAR_MIPMAP_NEAREST : gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, nearest ? gl.NEAREST : gl.LINEAR);
@@ -655,7 +656,7 @@ class Renderer {
     if (!col) { col = new Uint8Array(n * 4).fill(255); }
     buf(col, 3, 4, gl.UNSIGNED_BYTE, true);
     const ib = gl.createBuffer(); bufs.push(ib); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
-    gl.bindVertexArray(null);
+    gl.bindVertexArray(null); this.sVao = null;
     return { vao, bufs, count: idx.length, type: idx instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT };
   }
   // release GPU memory of an uploaded model (parts: mesh + own textures)
@@ -686,49 +687,64 @@ class Renderer {
     gl.uniformMatrix4fv(u.uVP, false, this.vp);
     gl.activeTexture(gl.TEXTURE0); gl.uniform1i(u.uTex, 0);
     gl.uniform3f(u.uFlash, 0, 0, 0);
+    this.sProg = this.prog.p; this.sCull = -2; this.sTex = null; this.sVao = null; this.sHas = this.sCut = this.sUn = -1; this.sF0 = this.sF1 = this.sF2 = 0; this.sC0 = this.sC1 = this.sC2 = this.sC3 = -1;
   }
+  _cull(c) { c = c ? 1 : 0; if (c !== this.sCull) { if (c) this.gl.enable(this.gl.CULL_FACE); else this.gl.disable(this.gl.CULL_FACE); this.sCull = c; } }
   clear(r, g, b) { const gl = this.gl; gl.clearColor(r, g, b, 1); gl.depthMask(true); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); }
   clearDepth() { const gl = this.gl; gl.depthMask(true); gl.clear(gl.DEPTH_BUFFER_BIT); }
   // draw parts of a GPU model with matrix M. opts: tint [r,g,b,a], flash [r,g,b], cull bool
   drawModel(model, M, tint, flash, cull = false) {
     const gl = this.gl, u = this.prog.u;
-    gl.useProgram(this.prog.p);
+    if (this.sProg !== this.prog.p) { gl.useProgram(this.prog.p); this.sProg = this.prog.p; }
     gl.uniformMatrix4fv(u.uM, false, M);
-    gl.uniform3f(u.uFlash, flash ? flash[0] : 0, flash ? flash[1] : 0, flash ? flash[2] : 0);
-    if (cull) gl.enable(gl.CULL_FACE); else gl.disable(gl.CULL_FACE);
+    const f0 = flash ? flash[0] : 0, f1 = flash ? flash[1] : 0, f2 = flash ? flash[2] : 0;
+    if (f0 !== this.sF0 || f1 !== this.sF1 || f2 !== this.sF2) { gl.uniform3f(u.uFlash, f0, f1, f2); this.sF0 = f0; this.sF1 = f1; this.sF2 = f2; }
+    this._cull(cull);
+    const t0 = tint ? tint[0] : 1, t1 = tint ? tint[1] : 1, t2 = tint ? tint[2] : 1;
     for (const p of model.parts) {
-      const c = p.color;
-      gl.uniform4f(u.uColor, c[0] * (tint ? tint[0] : 1), c[1] * (tint ? tint[1] : 1), c[2] * (tint ? tint[2] : 1), c[3]);
-      gl.uniform1f(u.uHasTex, p.hasTex ? 1 : 0); gl.uniform1f(u.uCut, p.cut); gl.uniform1f(u.uUnlit, p.unlit);
-      gl.bindTexture(gl.TEXTURE_2D, p.tex);
-      gl.bindVertexArray(p.mesh.vao); gl.drawElements(gl.TRIANGLES, p.mesh.count, p.mesh.type, 0);
+      const c = p.color, r = c[0] * t0, g = c[1] * t1, b = c[2] * t2, a = c[3];
+      if (r !== this.sC0 || g !== this.sC1 || b !== this.sC2 || a !== this.sC3) { gl.uniform4f(u.uColor, r, g, b, a); this.sC0 = r; this.sC1 = g; this.sC2 = b; this.sC3 = a; }
+      const ht = p.hasTex ? 1 : 0; if (ht !== this.sHas) { gl.uniform1f(u.uHasTex, ht); this.sHas = ht; }
+      if (p.cut !== this.sCut) { gl.uniform1f(u.uCut, p.cut); this.sCut = p.cut; }
+      if (p.unlit !== this.sUn) { gl.uniform1f(u.uUnlit, p.unlit); this.sUn = p.unlit; }
+      if (p.tex !== this.sTex) { gl.bindTexture(gl.TEXTURE_2D, p.tex); this.sTex = p.tex; }
+      const vao = p.mesh.vao; if (vao !== this.sVao) { gl.bindVertexArray(vao); this.sVao = vao; }
+      gl.drawElements(gl.TRIANGLES, p.mesh.count, p.mesh.type, 0);
     }
   }
   drawMesh(mesh, tex, M, cull = true, unlit = 0) {
     const gl = this.gl, u = this.prog.u;
-    gl.useProgram(this.prog.p);
-    gl.uniformMatrix4fv(u.uM, false, M); gl.uniform4f(u.uColor, 1, 1, 1, 1); gl.uniform1f(u.uHasTex, tex ? 1 : 0); gl.uniform1f(u.uCut, 0); gl.uniform1f(u.uUnlit, unlit);
-    gl.uniform3f(u.uFlash, 0, 0, 0);
-    if (cull) gl.enable(gl.CULL_FACE); else gl.disable(gl.CULL_FACE);
-    gl.bindTexture(gl.TEXTURE_2D, tex || this.white);
-    gl.bindVertexArray(mesh.vao); gl.drawElements(gl.TRIANGLES, mesh.count, mesh.type, 0);
+    if (this.sProg !== this.prog.p) { gl.useProgram(this.prog.p); this.sProg = this.prog.p; }
+    gl.uniformMatrix4fv(u.uM, false, M);
+    if (this.sC0 !== 1 || this.sC1 !== 1 || this.sC2 !== 1 || this.sC3 !== 1) { gl.uniform4f(u.uColor, 1, 1, 1, 1); this.sC0 = this.sC1 = this.sC2 = this.sC3 = 1; }
+    const ht = tex ? 1 : 0; if (ht !== this.sHas) { gl.uniform1f(u.uHasTex, ht); this.sHas = ht; }
+    if (this.sCut !== 0) { gl.uniform1f(u.uCut, 0); this.sCut = 0; }
+    if (unlit !== this.sUn) { gl.uniform1f(u.uUnlit, unlit); this.sUn = unlit; }
+    if (this.sF0 !== 0 || this.sF1 !== 0 || this.sF2 !== 0) { gl.uniform3f(u.uFlash, 0, 0, 0); this.sF0 = this.sF1 = this.sF2 = 0; }
+    this._cull(cull);
+    const tx = tex || this.white; if (tx !== this.sTex) { gl.bindTexture(gl.TEXTURE_2D, tx); this.sTex = tx; }
+    if (mesh.vao !== this.sVao) { gl.bindVertexArray(mesh.vao); this.sVao = mesh.vao; }
+    gl.drawElements(gl.TRIANGLES, mesh.count, mesh.type, 0);
   }
   // ---- fx quads ----
   _q(arr, n, p0, p1, p2, p3, c, soft) {
     if (n >= this.maxQ) return n;
-    let o = n * 40;
-    const put = (p, u, v) => { arr[o++] = p[0]; arr[o++] = p[1]; arr[o++] = p[2]; arr[o++] = c[0]; arr[o++] = c[1]; arr[o++] = c[2]; arr[o++] = c[3]; arr[o++] = u; arr[o++] = v; arr[o++] = soft; };
-    put(p0, 0, 0); put(p1, 1, 0); put(p2, 1, 1); put(p3, 0, 1);
+    let o = n * 40; const P = this._P || (this._P = [0, 0, 0, 0]); P[0] = p0; P[1] = p1; P[2] = p2; P[3] = p3;
+    for (let k = 0; k < 4; k++) { const p = P[k]; arr[o++] = p[0]; arr[o++] = p[1]; arr[o++] = p[2]; arr[o++] = c[0]; arr[o++] = c[1]; arr[o++] = c[2]; arr[o++] = c[3]; arr[o++] = (k === 1 || k === 2) ? 1 : 0; arr[o++] = k >= 2 ? 1 : 0; arr[o++] = soft; }
     return n + 1;
   }
+  _pv(arr, o, x, y, z, c, u, v, soft) { arr[o++] = x; arr[o++] = y; arr[o++] = z; arr[o++] = c[0]; arr[o++] = c[1]; arr[o++] = c[2]; arr[o++] = c[3]; arr[o++] = u; arr[o++] = v; arr[o++] = soft; return o; }
   billboard(x, y, z, s, c, soft = 1, add = false) {
-    const r = this.right, u = this.up, a = s;
-    const p0 = [x - (r[0] + u[0]) * a, y - (r[1] + u[1]) * a, z - (r[2] + u[2]) * a];
-    const p1 = [x + (r[0] - u[0]) * a, y + (r[1] - u[1]) * a, z + (r[2] - u[2]) * a];
-    const p2 = [x + (r[0] + u[0]) * a, y + (r[1] + u[1]) * a, z + (r[2] + u[2]) * a];
-    const p3 = [x - (r[0] - u[0]) * a, y - (r[1] - u[1]) * a, z - (r[2] - u[2]) * a];
-    if (add) this.fxAddN = this._q(this.fxAdd, this.fxAddN, p0, p1, p2, p3, c, soft);
-    else this.fxN = this._q(this.fxData, this.fxN, p0, p1, p2, p3, c, soft);
+    let arr, n; if (add) { arr = this.fxAdd; n = this.fxAddN; } else { arr = this.fxData; n = this.fxN; }
+    if (n >= this.maxQ) return;
+    const r = this.right, u = this.up;
+    const ax = (r[0] + u[0]) * s, ay = (r[1] + u[1]) * s, az = (r[2] + u[2]) * s, bx = (r[0] - u[0]) * s, by = (r[1] - u[1]) * s, bz = (r[2] - u[2]) * s;
+    let o = n * 40;
+    o = this._pv(arr, o, x - ax, y - ay, z - az, c, 0, 0, soft);
+    o = this._pv(arr, o, x + bx, y + by, z + bz, c, 1, 0, soft);
+    o = this._pv(arr, o, x + ax, y + ay, z + az, c, 1, 1, soft);
+    this._pv(arr, o, x - bx, y - by, z - bz, c, 0, 1, soft);
+    if (add) this.fxAddN = n + 1; else this.fxN = n + 1;
   }
   // camera-facing line (tracer)
   line(a, b, w, c, add = true) {
@@ -756,6 +772,7 @@ class Renderer {
     if (this.fxN) { gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.fxData.subarray(0, this.fxN * 40)); gl.drawElements(gl.TRIANGLES, this.fxN * 6, gl.UNSIGNED_SHORT, 0); }
     if (this.fxAddN) { gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.fxAdd.subarray(0, this.fxAddN * 40)); gl.drawElements(gl.TRIANGLES, this.fxAddN * 6, gl.UNSIGNED_SHORT, 0); }
     gl.disable(gl.BLEND); gl.depthMask(true); this.fxN = 0; this.fxAddN = 0; gl.bindVertexArray(null);
+    this.sProg = this.fx.p; this.sVao = null; this.sCull = 0;
   }
   // frustum planes from the current view-projection (for chunk culling)
   frustum(out = new Float32Array(24)) {
@@ -1768,22 +1785,25 @@ function initAudio() {
   } catch (e) { ctx = null; }
 }
 function setVolume(v) { vol = v; if (master) master.gain.value = v; }
+const A_TOUCH = (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) || ('ontouchstart' in window);
+let aActive = 0; const aLast = {}; const A_MAXV = A_TOUCH ? 14 : 40; const A_KEEP = { hurt: 1, hit: 1, headshot: 1, kill: 1, ui: 1, round: 1, go: 1, capture: 1, plant: 1, beep: 1, boom: 1 };
 function noise(t0, dur, f0, f1, gain, type = 'lowpass', q = 0.7, pan = 0) {
-  const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true; s.playbackRate.value = 0.8 + Math.random() * 0.4;
+  const s = ctx.createBufferSource(); aActive++; s.onended = () => { aActive--; }; s.buffer = noiseBuf; s.loop = true; s.playbackRate.value = 0.8 + Math.random() * 0.4;
   const f = ctx.createBiquadFilter(); f.type = type; f.Q.value = q; f.frequency.setValueAtTime(f0, t0); f.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t0 + dur);
   const g = ctx.createGain(); g.gain.setValueAtTime(gain, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-  let out = g; if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = pan; g.connect(p); out = p; }
+  let out = g; if (pan && ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = pan; g.connect(p); out = p; }
   s.connect(f); f.connect(g); out.connect(master); s.start(t0, Math.random() * 0.5); s.stop(t0 + dur + 0.05);
 }
 function tone(t0, dur, f0, f1, gain, type = 'sine', pan = 0) {
-  const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f0, t0); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t0 + dur);
+  const o = ctx.createOscillator(); aActive++; o.onended = () => { aActive--; }; o.type = type; o.frequency.setValueAtTime(f0, t0); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t0 + dur);
   const g = ctx.createGain(); g.gain.setValueAtTime(gain, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-  let out = g; if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = pan; g.connect(p); out = p; }
+  let out = g; if (pan && ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = pan; g.connect(p); out = p; }
   o.connect(g); out.connect(master); o.start(t0); o.stop(t0 + dur + 0.05);
 }
 // vol01: distance attenuation already applied, pan -1..1
 function sfx(name, v = 1, pan = 0) {
-  if (!ctx || v < 0.02) return; const t = ctx.currentTime;
+  if (!ctx || v < (A_TOUCH ? 0.035 : 0.02)) return; const t = ctx.currentTime;
+  if (!A_KEEP[name]) { if (aActive > A_MAXV) return; if (pan !== 0) { if (t - (aLast[name] || 0) < 0.035) return; aLast[name] = t; } }
   switch (name) {
     case 'rifle': noise(t, 0.16, 6000, 500, 0.9 * v, 'lowpass', 0.7, pan); tone(t, 0.1, 160, 50, 0.7 * v, 'sine', pan); break;
     case 'silenced': noise(t, 0.09, 2500, 400, 0.45 * v, 'lowpass', 0.7, pan); tone(t, 0.06, 120, 60, 0.3 * v, 'sine', pan); break;
@@ -1919,22 +1939,23 @@ __exp.MAX_HUMANS = MAX_HUMANS;__exp.Net = Net;__exp.installMockPeer = installMoc
 });
 __def('fx', function(__exp) {
 // Lightweight particle / tracer / decal system drawn through Renderer fx batches
+const FX_TOUCH = (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) || ('ontouchstart' in window);
 class FX {
-  constructor(R) { this.R = R; this.p = []; this.tr = []; this.dec = []; this.fl = []; this.maxP = 260; this.lowFx = false; }
+  constructor(R) { this.R = R; this.p = []; this.tr = []; this.dec = []; this.fl = []; this.maxP = 260; this.lowFx = FX_TOUCH; }
   spark(x, y, z, nx, ny, nz, col, n = 5, speed = 3.5, life = 0.35, size = 0.035) {
     if (this.lowFx) n = Math.ceil(n / 2);
-    for (let i = 0; i < n && this.p.length < this.maxP; i++) {
+    for (let i = 0; i < n && this.p.length < (this.lowFx ? 70 : this.maxP); i++) {
       const r = () => (Math.random() - 0.5) * 2;
       this.p.push({ x, y, z, vx: (nx + r() * 0.7) * speed * Math.random(), vy: (ny + r() * 0.7) * speed * Math.random() + 0.8, vz: (nz + r() * 0.7) * speed * Math.random(), life, max: life, s: size, c: col, add: true, g: 8 });
     }
   }
   puff(x, y, z, col, n = 3, size = 0.18, life = 0.6) {
     if (this.lowFx) n = 1;
-    for (let i = 0; i < n && this.p.length < this.maxP; i++) this.p.push({ x, y, z, vx: (Math.random() - 0.5) * 0.8, vy: 0.4 + Math.random() * 0.6, vz: (Math.random() - 0.5) * 0.8, life, max: life, s: size, c: col, add: false, g: -0.2, grow: 1.8 });
+    for (let i = 0; i < n && this.p.length < (this.lowFx ? 70 : this.maxP); i++) this.p.push({ x, y, z, vx: (Math.random() - 0.5) * 0.8, vy: 0.4 + Math.random() * 0.6, vz: (Math.random() - 0.5) * 0.8, life, max: life, s: size, c: col, add: false, g: -0.2, grow: 1.8 });
   }
   blood(x, y, z, nx, ny, nz) { this.spark(x, y, z, nx, ny, nz, [0.75, 0.05, 0.05, 1], 5, 2.5, 0.45, 0.05); }
   tracer(a, b, col, w = 0.012, life = 0.07) { this.tr.push({ a, b, col, w, life, max: life }); }
-  decal(p, n) { this.dec.push({ p: [p[0], p[1], p[2]], n: [n[0], n[1], n[2]], life: 25 }); if (this.dec.length > (this.lowFx ? 18 : 40)) this.dec.shift(); }
+  decal(p, n) { this.dec.push({ p: [p[0], p[1], p[2]], n: [n[0], n[1], n[2]], life: 25 }); if (this.dec.length > (this.lowFx ? 10 : 40)) this.dec.shift(); }
   flash(x, y, z, size, col, life = 0.06) { this.fl.push({ x, y, z, size, col, life, max: life }); }
   boom(x, y, z, r, col = [1, 0.6, 0.2]) {
     this.fl.push({ x, y, z, size: r, col, life: 0.35, max: 0.35, grow: 1 });
@@ -2084,6 +2105,7 @@ const DIFF = {
   hard: { react: 0.16, aim: 0.012, turn: 12, acc: 1 },
 };
 const r2 = v => Math.round(v * 100) / 100;
+const SIM_TOUCH = (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) || ('ontouchstart' in window);
 const rand = (a, b) => a + Math.random() * (b - a);
 const angDiff = (a, b) => { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; };
 const NEUTRAL_CHARS = CHARS.filter(c => c.team === -1).map(c => c.id), NEUTRAL_RATE = 0.08; // chance a bot/auto-assigned skin is a neutral one
@@ -2574,8 +2596,8 @@ class Sim {
       } else if (b.target && this.time - b.seenT > 1.2) b.target = null;
       // goal / path
       b.repath -= 0.15;
-      if (!b.goal || b.repath <= 0 || (b.goal.reached)) {
-        const g = this.botGoal(p); b.goal = g; b.repath = 3 + Math.random() * 3;
+      if (!b.goal || ((b.repath <= 0 || b.goal.reached) && this._pb > 0)) {
+        this._pb--; const g = this.botGoal(p); b.goal = g; b.repath = 3 + Math.random() * 3;
         b.path = findPath(p.x, p.z, g.x, g.z); b.pi = 1;
       }
     }
@@ -2633,8 +2655,9 @@ class Sim {
   }
   // ---------- main tick ----------
   tick(dt) {
-    dt = Math.min(dt, 0.1);
-    const n = Math.max(1, Math.ceil(dt / (1 / 60))), h = dt / n;
+    dt = Math.min(dt, 0.1); this._pb = 1; /* max one A* path search per frame */
+    const sd = this._sd || (this._sd = (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) ? 1 / 40 : 1 / 60);
+    const n = Math.max(1, Math.ceil(dt / sd)), h = dt / n;
     for (let i = 0; i < n; i++) this.step(h);
   }
   farFromHumans(p) { if (p.lodN === undefined) p.lodN = (p.id % 3); if (this._hT !== this.time) { this._hT = this.time; this._hum = []; for (const q of this.players.values()) if (q.human && q.alive) this._hum.push(q); } for (const q of this._hum) { const dx = q.x - p.x, dz = q.z - p.z; if (dx * dx + dz * dz < 12100) return false; } return true; }
@@ -2742,9 +2765,10 @@ class Sim {
     this.players.set(z.id, z);
   }
   zombieFlow(dt) {
-    this.zNav -= dt; if (this.zNav > 0) return; this.zNav = 0.35;
+    this.zNav -= dt; if (this.zNav > 0) return; this.zNav = SIM_TOUCH ? 0.6 : 0.35;
     const S = this.survivors(); if (!S.length) return; computeFlow(S.map(q => [q.x, q.z])); this.zFlowReady = true;
   }
+  _zlf(zs, z, t) { if (!(this.time < zs.lfT)) { zs.lfV = lineFree(z.x, z.z, t.x, t.z, 0.4); zs.lfT = this.time + 0.12; } return zs.lfV; }
   zombieUpdate(z, dt) {
     const T = ZTYPES[z.zt], zs = z.zs, frozen = this.m.phase !== 'live';
     zs.tt -= dt;
@@ -2757,13 +2781,14 @@ class Sim {
       const reach = T.reach + 0.3;
       if (d < reach && Math.abs(t.y - z.y) < 1.6) {
         if (this.time >= zs.atk && this.time >= z.stunT) { zs.atk = this.time + T.rate; this.damage(t, T.dmg * (1 + 0.03 * (this.m.rd - 1)), z, 'claw', false); this.ev({ k: 'zatk', id: z.id }); }
-      } else if (d < 14 && lineFree(z.x, z.z, t.x, t.z, 0.4)) { mx = dx / d; mz = dz / d; }
+      } else if (d < 14 && this._zlf(zs, z, t)) { mx = dx / d; mz = dz / d; }
       else { const f = flowDir(z.x, z.z); if (f) { mx = f.x; mz = f.z; } else { mx = dx / d; mz = dz / d; } }
     }
     // separation from other zombies
     let sx = 0, sz = 0;
+    if (zs.sepN-- > 0) { sx = zs.sx; sz = zs.sz; } else { zs.sepN = SIM_TOUCH ? 2 : 0;
     for (const o of this.players.values()) { if (o === z || !o.zt || !o.alive) continue; const ax = z.x - o.x, az = z.z - o.z, dd = ax * ax + az * az, rr = T.r + ZTYPES[o.zt].r + 0.1; if (dd < rr * rr && dd > 1e-6) { const l = Math.sqrt(dd); sx += ax / l * (rr - l); sz += az / l * (rr - l); } }
-    { const sl = Math.hypot(sx, sz); if (sl > 0.7) { sx *= 0.7 / sl; sz *= 0.7 / sl; } mx += sx; mz += sz; }
+    { const sl = Math.hypot(sx, sz); if (sl > 0.7) { sx *= 0.7 / sl; sz *= 0.7 / sl; } zs.sx = sx; zs.sz = sz; } } mx += sx; mz += sz;
     const ml = Math.hypot(mx, mz); if (ml > 1) { mx /= ml; mz /= ml; }
     // stuck -> hop
     zs.st += dt; if (zs.st > 0.7) { const mv = Math.hypot(z.x - zs.lx, z.z - zs.lz); if (mv < 0.3 && ml > 0.2) zs.jump = this.time + 0.25; zs.lx = z.x; zs.lz = z.z; zs.st = 0; }
@@ -3468,6 +3493,7 @@ const {WEAPONS} = __req('weapons');
 const $ = id => document.getElementById(id);
 const TC = ['#5b9bff', '#ff7a45'], TN = ['CT', 'T'];
 
+const HUD_TOUCH = (typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches) || ('ontouchstart' in window);
 class HUD {
   constructor() {
     this.cv = $('hudc'); this.ctx = this.cv.getContext('2d'); this.cache = {}; this.dpr = 1; this.W = 0; this.H = 0;
@@ -3510,7 +3536,7 @@ class HUD {
     d.innerHTML = (kn ? `<b style="color:${TC[kt]}">${esc(kn)}</b> ` : '') + `<i>${esc(wn)}${hs ? ' ✦' : ''}</i> <b style="color:${TC[vt]}">${esc(vn)}</b>`;
     f.appendChild(d); while (f.children.length > 5) f.removeChild(f.firstChild); setTimeout(() => d.remove(), 5500);
   }
-  hitmarker(head) { const h = $('hitm'); h.className = ''; void h.offsetWidth; h.className = head ? 'on head' : 'on'; }
+  hitmarker(head) { const nw = performance.now(); if (nw - (this._hm || 0) < 70) return; this._hm = nw; const h = $('hitm'); h.className = ''; void h.offsetWidth; h.className = head ? 'on head' : 'on'; }
   damage(ang, d) {
     const e = $('dmg'); e.style.opacity = Math.min(0.9, 0.35 + d / 100); clearTimeout(this.dt); this.dt = setTimeout(() => e.style.opacity = 0, 350);
     const a = $('dmgDir'); a.style.transform = `rotate(${ang}rad)`; a.style.opacity = 1; clearTimeout(this.dd); this.dd = setTimeout(() => a.style.opacity = 0, 900);
@@ -3542,6 +3568,7 @@ class HUD {
   }
   // ---- overlay canvas ----
   drawMarkers(g) {
+    if (HUD_TOUCH && ((this._fc = (this._fc || 0) + 1) & 1)) return;
     const c = this.ctx, d = this.dpr, W = this.W, H = this.H; c.setTransform(d, 0, 0, d, 0, 0); c.clearRect(0, 0, W, H);
     const me = g.me(), v = g.view; if (!me) return;
     c.font = 'bold 11px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -3735,12 +3762,12 @@ class Game {
   fromSim(p, o) {
     o.id = p.id; o.x = p.x; o.y = p.y; o.z = p.z; o.yaw = p.yaw; o.pitch = p.pitch; o.hp = p.hp; o.alive = p.alive; o.grounded = p.grounded; o.isVip = p.isVip; o.hasBomb = p.hasBomb; o.reloading = !!p.reloadT; o.prot = p.prot > 0;
     o.cur = p.cur; o.speed = p.speed; o.team = p.team; o.kills = p.kills; o.deaths = p.deaths; o.score = p.score; o.flag = p.flag; o.charId = p.charId; o.human = p.human; o.wp0 = p.wp[0]; o.wp1 = p.wp[1]; o.useT = p.useT;
-    o.maxhp = p.maxhp; o.zt = !!p.zt; o.name = p.zt ? ZLABEL[p.zt] : p.name; o.st = (p.dots.some(d => d.k === 'burn') ? 1 : 0) | (p.dots.some(d => d.k === 'bleed') ? 2 : 0) | (p.slowT > 0 ? 4 : 0);
+    o.maxhp = p.maxhp; o.zt = !!p.zt; o.name = p.zt ? ZLABEL[p.zt] : p.name; { let st = p.slowT > 0 ? 4 : 0; const D = p.dots; for (let i = 0; i < D.length; i++) { const k = D[i].k; if (k === 'burn') st |= 1; else if (k === 'bleed') st |= 2; } o.st = st; }
     o.air = p.air | 0; o.veh = p.veh >= 0 ? p.veh : -1; o.rider = false;
     if (o.veh >= 0 && this.sim.br) { const v = this.sim.br.veh[o.veh]; if (v && v.type === 'bike') { o.rider = true; o.yaw = v.yaw; o.y = v.y + 0.25; } }
   }
   buildEnts(dt) {
-    const seen = new Set(), now = performance.now() / 1000;
+    const seen = this._seenSet || (this._seenSet = new Set()); seen.clear(); const now = performance.now() / 1000;
     if (this.role !== 'client') {
       for (const p of this.sim.players.values()) { let o = this.ents.get(p.id); if (!o) { o = {}; this.ents.set(p.id, o); } this.fromSim(p, o); seen.add(p.id); }
     } else if (this.snaps.length) {
@@ -3758,7 +3785,7 @@ class Game {
         if (id === this.meId && this.pred) { o.x = this.pred.x; o.y = this.pred.y; o.z = this.pred.z; o.yaw = this.ctl.yaw; o.pitch = this.ctl.pitch; }
       }
     }
-    for (const id of [...this.ents.keys()]) if (!seen.has(id)) { this.ents.delete(id); this.anim.delete(id); }
+    if (this.ents.size !== seen.size) for (const id of [...this.ents.keys()]) if (!seen.has(id)) { this.ents.delete(id); this.anim.delete(id); }
     // animation state
     for (const o of this.ents.values()) {
       const a = this.getAnim(o.id);
@@ -3820,7 +3847,7 @@ class Game {
         else { sx += dx / l * 0.6; sz += dz / l * 0.6; }
         const big = e.w === 'alien';
         const tc = w.tracer || (big ? [0.5, 1, 0.3] : [1, 0.9, 0.55]), tw = w.tw || (big ? 0.06 : 0.012), tl = w.tlife || (big ? 0.14 : 0.06);
-        if (!(w.pellets > 1 && this.fx.tr.length > 40)) fx.tracer([sx, sy, sz], [e.ex, e.ey, e.ez], tc, tw, tl);
+        if (!(w.pellets > 1 && this.fx.tr.length > (this.fx.lowFx ? 14 : 40))) fx.tracer([sx, sy, sz], [e.ex, e.ey, e.ez], tc, tw, tl);
         if (a || mine) { const an = this.getAnim(e.id); an.lastShotAt = performance.now() / 1000; }
         if (!mine || this.role !== 'client') { if (!mine || true) { if (!(mine && this.role === 'client')) { if (mine) sfx(w.snd, w.silent ? 0.5 : 1, 0); else this.spatial(w.snd, e.ox, e.oy, e.oz, w.silent ? 0.25 : 1.1); } } }
         if (mine) { this.recoilAnim = 1; this.kick += w.kick * 0.55; this.ctl.yaw += (Math.random() - 0.5) * w.kick * 0.5; }
@@ -3830,7 +3857,7 @@ class Game {
       }
       case 'arc': {
         const P = e.pts; for (let i = 0; i + 1 < P.length; i++) {
-          let a0 = P[i], a1 = P[i + 1]; const n = 5; let prev = a0;
+          let a0 = P[i], a1 = P[i + 1]; const n = this.fx.lowFx ? 3 : 5; let prev = a0;
           for (let k = 1; k <= n; k++) { const t = k / n, j = k === n ? 0 : 0.28; const q = [a0[0] + (a1[0] - a0[0]) * t + (Math.random() - 0.5) * j, a0[1] + (a1[1] - a0[1]) * t + (Math.random() - 0.5) * j, a0[2] + (a1[2] - a0[2]) * t + (Math.random() - 0.5) * j]; fx.tracer(prev, q, [1, 0.75, 0.3], 0.035, 0.16); fx.tracer(prev, q, [1, 1, 0.9], 0.012, 0.16); prev = q; }
           fx.flash(a1[0], a1[1], a1[2], 0.35, [1, 0.7, 0.25], 0.14);
         }
@@ -4343,7 +4370,7 @@ function initUI() {
 }
 let settingsBack = 'scrHome';
 function applySettings() {
-  ctl.sens = set.sens; setVolume(set.vol); if (game) { game.fovBase = set.fov; const q = qualityCfg(); game.quality.dist = q.dist; game.fx.lowFx = q.lowFx; }
+  ctl.sens = set.sens; setVolume(set.vol); if (game) { game.fovBase = set.fov; const q = qualityCfg(); game.quality.dist = q.dist; game.fx.lowFx = q.lowFx || ctl.touch; }
   $('fps').style.display = set.fps ? 'block' : 'none';
 }
 function playerName() { return ($('inName').value.trim() || 'Player').slice(0, 14); }
