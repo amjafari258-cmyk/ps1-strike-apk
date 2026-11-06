@@ -47,4 +47,28 @@ public class MainActivity extends BridgeActivity {
   }
 }
 ''')
+
+# ---- custom launcher icon: put icon.png (square, 512x512 or bigger) in the repo root
+import os, subprocess, sys, shutil
+icon = None
+for cand in ('icon.png', 'Icon.png', 'icon.PNG'):
+    if os.path.exists(cand): icon = cand; break
+if icon:
+    try:
+        from PIL import Image
+    except ImportError:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--quiet', 'pillow']); from PIL import Image
+    im = Image.open(icon).convert('RGBA')
+    side = min(im.size); im = im.crop(((im.width - side) // 2, (im.height - side) // 2, (im.width - side) // 2 + side, (im.height - side) // 2 + side))
+    for d, px in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):
+        folder = base / 'res' / ('mipmap-' + d)
+        folder.mkdir(parents=True, exist_ok=True)
+        r = im.resize((px, px), Image.LANCZOS)
+        for n in ('ic_launcher.png', 'ic_launcher_round.png', 'ic_launcher_foreground.png'):
+            r.save(folder / n)
+    any26 = base / 'res' / 'mipmap-anydpi-v26'
+    if any26.exists(): shutil.rmtree(any26)
+    print('icon applied from', icon)
+else:
+    print('no icon.png found, default icon kept')
 print('patched')
